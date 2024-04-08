@@ -35,58 +35,74 @@ app.use('/uploads', express.static(__dirname + '/uploads'));
   
 mongoose.connect(`${MONGO_URL}`);
 
-app.post('/upload', upload.single('file'), async(req,res)=>{
-    console.log("Uploading data to Database...")
-    const workbook = xlsx.readFile(req.file.path);
-    const sheetName = workbook.SheetNames[0];
-    const sheet = workbook.Sheets[sheetName];
-    const data = xlsx.utils.sheet_to_json(sheet);
+app.post('/upload', upload.single('file'), async (req, res) => {
+    console.log("Uploading data to Database...");
+    
+    const worker = new Worker('./worker.js', { workerData: req.file.path });
 
-    try{
-        for (const entry of data) {
-            const existingAgent = await Agent.findOne({ agent: entry.agent });
-            if (!existingAgent) {
-                await Agent.create({ agent: entry.agent });
-            }
-            const existingCategory = await Category.findOne({ categoryName: entry.category_name });
-            if (!existingCategory) {
-                await Category.create({ categoryName: entry.category_name });
-            }
-            const existingCompany = await Company.findOne({ companyName: entry.company_name });
-            if (!existingCompany) {
-                await Company.create({ companyName: entry.company_name });
-            }
-            const existingAccount = await Account.findOne({ accountName: entry.account_name });
-            if (!existingAccount) {
-                await Account.create({ accountName: entry.account_name });
-            }
-                
-            await User.create({ firstName: entry.firstname, dob: entry.dob, address: entry.address, phoneNumber: entry.phone, state: entry.state, city: entry.city, zip: entry.zip, email: entry.email, userType: entry.userType });
-
-            let agentId = await Agent.findOne({ agent: entry.agent });
-            let userId = await User.findOne({ email: entry.email });
-            let accountId = await Account.findOne({ accountName: entry.account_name });
-            let categoryId = await Category.findOne({ categoryName: entry.category_name });
-            let companyId = await Company.findOne({ companyName: entry.company_name });
-            
-            const policyCategory = [];
-            let policyDetails = {
-                agentId: agentId._id,
-                userId: userId._id,
-                accountId: accountId._id,
-                categoryId: categoryId._id,
-                companyId: companyId._id
-            };
-
-            policyCategory.push(policyDetails);
-            await Policy.create({ policyNumber: entry.policy_number, policyStartDate: entry.policy_start_date, policyEndDate: entry.policy_end_date, policyType: entry.policy_type, policyMode: entry.policy_mode, premiumAmount: entry.premium_amount, csr: entry.csr, policyCategory: policyCategory});
+    worker.on('message', async (data) => {
+        try {
+            await processData(data);
+            res.status(200).json({ message: "Data uploaded successfully!" });
+        } catch (err) {
+            console.log("Error while saving to DB");
+            res.status(500).json({ error: "Error while saving data to DB" });
         }
-        res.status(200).json({ message: "Data uploaded successfully!" });
-    }catch(err){
-        console.log("Error while saving to DB");
-        res.status(500).json({ error: "Error while saving data to DB" });
-    }
+    });
+
+    worker.on('error', (err) => {
+        console.error(err);
+        res.status(500).json({ error: "Error while processing data" });
+    });
+
+    worker.on('exit', (code) => {
+        if (code !== 0) {
+            console.error(`Worker stopped with exit code ${code}`);
+            res.status(500).json({ error: "Worker stopped unexpectedly" });
+        }
+    });
 });
+
+async function processData(data) {
+    for (const entry of data) {
+        const existingAgent = await Agent.findOne({ agent: entry.agent });
+        if (!existingAgent) {
+            await Agent.create({ agent: entry.agent });
+        }
+        const existingCategory = await Category.findOne({ categoryName: entry.category_name });
+        if (!existingCategory) {
+            await Category.create({ categoryName: entry.category_name });
+        }
+        const existingCompany = await Company.findOne({ companyName: entry.company_name });
+        if (!existingCompany) {
+            await Company.create({ companyName: entry.company_name });
+        }
+        const existingAccount = await Account.findOne({ accountName: entry.account_name });
+        if (!existingAccount) {
+            await Account.create({ accountName: entry.account_name });
+        }
+            
+        await User.create({ firstName: entry.firstname, dob: entry.dob, address: entry.address, phoneNumber: entry.phone, state: entry.state, city: entry.city, zip: entry.zip, email: entry.email, userType: entry.userType });
+
+        let agentId = await Agent.findOne({ agent: entry.agent });
+        let userId = await User.findOne({ email: entry.email });
+        let accountId = await Account.findOne({ accountName: entry.account_name });
+        let categoryId = await Category.findOne({ categoryName: entry.category_name });
+        let companyId = await Company.findOne({ companyName: entry.company_name });
+        
+        const policyCategory = [];
+        let policyDetails = {
+            agentId: agentId._id,
+            userId: userId._id,
+            accountId: accountId._id,
+            categoryId: categoryId._id,
+            companyId: companyId._id
+        };
+
+        policyCategory.push(policyDetails);
+        await Policy.create({ policyNumber: entry.policy_number, policyStartDate: entry.policy_start_date, policyEndDate: entry.policy_end_date, policyType: entry.policy_type, policyMode: entry.policy_mode, premiumAmount: entry.premium_amount, csr: entry.csr, policyCategory: policyCategory});
+    }
+}
 
 app.get('/search/:userName', async (req,res) => {
     try{
